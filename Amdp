@@ -1,0 +1,108 @@
+METHOD get_po_status
+  BY DATABASE PROCEDURE
+  FOR HDB
+  LANGUAGE SQLSCRIPT
+  OPTIONS READ-ONLY
+  USING ekpo zca01constants.
+
+  /*---------------------------------------------------------
+    Get PO items
+  ---------------------------------------------------------*/
+  lt_items =
+    SELECT
+        p.ebeln,
+        p.ebelp,
+        p.matnr,
+        p.loekz,
+        p.elikz,
+
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+              FROM zca01constants AS c
+             WHERE LTRIM(p.matnr, '0') = c.from_val
+          )
+          THEN 1
+          ELSE 0
+        END AS is_fee
+
+    FROM ekpo AS p
+    WHERE p.ebeln IN (
+      SELECT ebeln
+      FROM :it_ekko
+    );
+
+
+  /*---------------------------------------------------------
+    Aggregate at PO level
+  ---------------------------------------------------------*/
+  lt_po =
+    SELECT
+        ebeln,
+
+        COUNT(*) AS total_items,
+
+        /* Deleted items */
+        SUM(
+          CASE
+            WHEN loekz = 'L'
+            THEN 1
+            ELSE 0
+          END
+        ) AS deleted_items,
+
+        /* Open NON-FEE items */
+        SUM(
+          CASE
+            WHEN COALESCE(loekz, '') <> 'L'
+             AND is_fee = 0
+             AND COALESCE(elikz, '') = ''
+            THEN 1
+            ELSE 0
+          END
+        ) AS open_non_fee,
+
+        /* Open FEE items */
+        SUM(
+          CASE
+            WHEN COALESCE(loekz, '') <> 'L'
+             AND is_fee = 1
+             AND COALESCE(elikz, '') = ''
+            THEN 1
+            ELSE 0
+          END
+        ) AS open_fee
+
+    FROM :lt_items
+    GROUP BY ebeln;
+
+
+  /*---------------------------------------------------------
+    Determine PO status
+  ---------------------------------------------------------*/
+  et_status =
+    SELECT
+        ebeln,
+
+        CASE
+
+          /* All items deleted */
+          WHEN deleted_items = total_items
+            THEN 'CANCELLED'
+
+          /* Normal material still open */
+          WHEN open_non_fee > 0
+            THEN 'ACTIVE'
+
+          /* Only FEE material still open */
+          WHEN open_fee > 0
+            THEN 'OPEN'
+
+          /* Everything remaining is completed */
+          ELSE 'COMPLETED'
+
+        END AS po_status
+
+    FROM :lt_po;
+
+ENDMETHOD.
