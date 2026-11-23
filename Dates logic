@@ -1,0 +1,78 @@
+DATA: lv_fdat   TYPE d,
+      lv_ftim   TYPE t,
+      lv_tdat   TYPE d,
+      lv_ttim   TYPE t,
+      lv_filter TYPE abap_bool.
+
+" Decide the date/time window: override first, else last run
+IF p_ofd IS NOT INITIAL OR p_otd IS NOT INITIAL.
+  lv_fdat = p_ofd.
+  lv_ftim = p_oft.
+  IF p_otd IS NOT INITIAL.
+    lv_tdat = p_otd.
+    lv_ttim = COND #( WHEN p_ott IS INITIAL THEN '235959' ELSE p_ott ).
+  ELSE.
+    lv_tdat = sy-datum.
+    lv_ttim = sy-uzeit.
+  ENDIF.
+  lv_filter = abap_true.
+ELSEIF p_lrundt IS NOT INITIAL.
+  lv_fdat = p_lrundt.
+  lv_ftim = p_lrunt.
+  lv_tdat = sy-datum.
+  lv_ttim = sy-uzeit.
+  lv_filter = abap_true.
+ENDIF.
+
+IF lv_filter = abap_true.
+  gr_chdat = VALUE #( ( sign = 'I' option = 'BT' low = lv_fdat high = lv_tdat ) ).
+ENDIF.
+
+" Display the window used after report execution
+IF lv_filter = abap_true.
+  gd_from_ts = |{ lv_fdat DATE = USER } { lv_ftim TIME = USER }|.
+  gd_to_ts   = |{ lv_tdat DATE = USER } { lv_ttim TIME = USER }|.
+ELSE.
+  gd_from_ts = |{ p_lrundt DATE = USER } { p_lrunt TIME = USER }|.
+  gd_to_ts   = |{ sy-datum DATE = USER } { sy-uzeit TIME = USER }|.
+ENDIF.
+
+" Last run date parameter set
+IF p_ofd IS NOT INITIAL OR p_otd IS NOT INITIAL.
+  " Override run: do not move the last run date/time
+  gd_ldate = p_lrundt.
+  gd_ltime = p_lrunt.
+ELSE.
+  gd_ldate = sy-datum.
+  gd_ltime = sy-uzeit.
+ENDIF.
+
+SELECT a~partner, c~chdat, c~chtim, c~crdat, c~crtim
+  FROM but0id AS a
+  INNER JOIN knb1 AS b
+    ON a~partner = b~kunnr
+  INNER JOIN but000 AS c
+    ON a~partner = c~partner
+  WHERE a~partner IN @s_bp[]
+    AND a~type     = @gc_gsa1
+    AND a~idnumber = @gc_8
+    AND b~bukrs   IN @s_ccode[]
+    AND ( c~chdat IN @gr_chdat[]
+       OR c~crdat IN @gr_chdat[] )
+  INTO TABLE @DATA(gt_bp).
+IF sy-subrc = 0.
+
+  " Delete records whose change AND create timestamps are outside the window
+  IF lv_filter = abap_true.
+    DELETE gt_bp WHERE NOT (
+        ( ( chdat > lv_fdat OR ( chdat = lv_fdat AND chtim >= lv_ftim ) )
+      AND ( chdat < lv_tdat OR ( chdat = lv_tdat AND chtim <= lv_ttim ) ) )
+     OR ( ( crdat > lv_fdat OR ( crdat = lv_fdat AND crtim >= lv_ftim ) )
+      AND ( crdat < lv_tdat OR ( crdat = lv_tdat AND crtim <= lv_ttim ) ) ) ).
+  ENDIF.
+
+  SORT gt_bp BY partner.
+  DELETE ADJACENT DUPLICATES FROM gt_bp COMPARING partner.
+
+  IF gt_bp IS NOT INITIAL.
+    " ... your existing SELECT on but0id FOR ALL ENTRIES stays as is
