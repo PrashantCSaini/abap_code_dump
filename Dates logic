@@ -76,3 +76,30 @@ IF sy-subrc = 0.
 
   IF gt_bp IS NOT INITIAL.
     " ... your existing SELECT on but0id FOR ALL ENTRIES stays as is
+
+
+
+
+AT SELECTION-SCREEN ON BLOCK b2.
+  " Time entered without a date
+  IF ( p_oft IS NOT INITIAL AND p_ofd IS INITIAL )
+  OR ( p_ott IS NOT INITIAL AND p_otd IS INITIAL ).
+    MESSAGE text-022 TYPE 'E'.
+  ENDIF.
+
+  " From date/time must not be later than To date/time
+  IF p_ofd IS NOT INITIAL AND p_otd IS NOT INITIAL.
+    DATA(lv_to_time) = COND t( WHEN p_ott IS INITIAL THEN '235959' ELSE p_ott ).
+    IF p_ofd > p_otd
+    OR ( p_ofd = p_otd AND p_oft > lv_to_time ).
+      MESSAGE text-021 TYPE 'E'.
+    ENDIF.
+  ENDIF.
+
+  " From in the future (To defaults to now when blank)
+  IF p_ofd IS NOT INITIAL AND p_otd IS INITIAL.
+    IF p_ofd > sy-datum
+    OR ( p_ofd = sy-datum AND p_oft > sy-uzeit ).
+      MESSAGE text-021 TYPE 'E'.
+    ENDIF.
+  ENDIF.
